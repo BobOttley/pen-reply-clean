@@ -1,64 +1,41 @@
-import os, json, pickle, numpy as np, re
+import os, json, pickle, re
 from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 from openai import OpenAI
 from dotenv import load_dotenv
 from scipy.spatial.distance import cosine
 
-# ─────────────────────────────────────────────────────
-# ✅ SETUP
-# ─────────────────────────────────────────────────────
-
 load_dotenv()
 app = Flask(__name__)
 CORS(app)
-
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-print("🚀 PEN Reply Flask server starting...")
+print("🚀 PEN Reply Flask server starting (torch-free)")
 
-# Embedding config
+# Config
 EMBED_MODEL = "text-embedding-3-small"
 SIMILARITY_THRESHOLD = 0.3
 RESPONSE_LIMIT = 3
 
-# ─────────────────────────────────────────────────────
-# ✅ LOAD KNOWLEDGE BASE
-# ─────────────────────────────────────────────────────
-
+# Load knowledge base
 with open("embeddings/metadata.pkl", "rb") as f:
     data = pickle.load(f)
-    doc_embeddings = np.array(data["embeddings"])
+    doc_embeddings = data["embeddings"]
     metadata = data["metadata"]
 
 print(f"✅ Loaded {len(metadata)} knowledge chunks.")
 
 
-# ─────────────────────────────────────────────────────
-# 🔎 Embed a user query
-# ─────────────────────────────────────────────────────
-
+# Helper: Embed query
 def embed_text(text):
-    text = text.replace("\n", " ")
-    result = client.embeddings.create(
-        input=[text],
-        model=EMBED_MODEL
-    )
-    return np.array(result.data[0].embedding)
+    result = client.embeddings.create(input=[text], model=EMBED_MODEL)
+    return result.data[0].embedding
 
 
-# 🔗 Convert markdown links to HTML
+# Helper: Markdown to HTML
 def convert_markdown_to_html(text):
-    return re.sub(
-        r'\[([^\]]+)\]\((https?://[^\)]+)\)',
-        r'<a href="\2" target="_blank">\1</a>',
-        text
-    )
+    return re.sub(r'\[([^\]]+)\]\((https?://[^\)]+)\)', r'<a href="\2" target="_blank">\1</a>', text)
 
-
-# ─────────────────────────────────────────────────────
-# 📨 POST /reply
-# ─────────────────────────────────────────────────────
 
 @app.route("/reply", methods=["POST"])
 def reply():
@@ -71,11 +48,18 @@ def reply():
 
         print(f"📩 Parent enquiry: {question}")
 
-        # Embed and match against knowledge base
         query_vec = embed_text(question)
-        scored = [(1 - cosine(query_vec, vec), meta) for vec, meta in zip(doc_embeddings, metadata)]
-        matches = [m for m in scored if m[0] >= SIMILARITY_THRESHOLD]
-        top_matches = sorted(matches, key=lambda x: x[0], reverse=True)[:RESPONSE_LIMIT]
+        # Score similarity against each document
+        scored = []
+        for vec, meta in zip(doc_embeddings, metadata):
+            try:
+                similarity = 1 - cosine(query_vec, vec)
+                if similarity >= SIMILARITY_THRESHOLD:
+                    scored.append((similarity, meta))
+            except Exception:
+                continue
+
+        top_matches = sorted(scored, key=lambda x: x[0], reverse=True)[:RESPONSE_LIMIT]
 
         if not top_matches:
             return jsonify({
@@ -88,7 +72,7 @@ def reply():
             url = meta.get("url", "")
             top_context += f"{meta['text']}\n[Source]({url})\n---\n"
 
-        # Construct the system prompt
+        # GPT prompt
         prompt = f"""
 You are Jess Ottley-Woodd, Director of Admissions at Bassett House School, a UK prep school.
 
@@ -116,7 +100,6 @@ Director of Admissions
 Bassett House School
 """
 
-        # Generate the reply using GPT-4
         response = client.chat.completions.create(
             model="gpt-4",
             messages=[{"role": "user", "content": prompt}],
@@ -125,19 +108,14 @@ Bassett House School
 
         reply_markdown = response.choices[0].message.content.strip()
         reply_html = convert_markdown_to_html(reply_markdown)
-
         return jsonify({"reply": reply_html})
 
     except Exception as e:
         print(f"❌ ERROR: {e}")
         return jsonify({
-            "reply": "<p>⚠️ An internal error occurred while generating the reply.</p>"
+            "reply": "<p>⚠️ Internal error generating the reply.</p>"
         }), 500
 
-
-# ─────────────────────────────────────────────────────
-# 🌐 GET /
-# ─────────────────────────────────────────────────────
 
 @app.route("/", methods=["GET"])
 def index():
@@ -146,10 +124,6 @@ def index():
     except Exception as e:
         return f"500 INTERNAL ERROR: {e}", 500
 
-
-# ─────────────────────────────────────────────────────
-# ▶️ START SERVER
-# ─────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     app.run(debug=True)
