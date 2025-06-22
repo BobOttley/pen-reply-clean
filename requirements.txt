@@ -1,7 +1,7 @@
 ## --- Core AI packages ---
 openai>=1.31.0
 sentence-transformers==2.5.1
-torch==2.2.2
+torch==2.1.2
 torchaudio==2.2.2
 torchvision==0.17.2
 
