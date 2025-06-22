@@ -1,9 +1,9 @@
 ## --- Core AI packages ---
 openai>=1.31.0
-sentence-transformers==2.5.1
-torch==2.1.2
-torchaudio==2.2.2
-torchvision==0.17.2
+sentence-transformers==2.7.0
+torch==2.5.1
+torchaudio==2.5.1
+torchvision==0.18.1
 
 # --- Flask app + env ---
 flask==2.3.3
