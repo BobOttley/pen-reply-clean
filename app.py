@@ -3,14 +3,13 @@ from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 from openai import OpenAI
 from dotenv import load_dotenv
-from scipy.spatial.distance import cosine
 
 load_dotenv()
 app = Flask(__name__)
 CORS(app)
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-print("🚀 PEN Reply Flask server starting (torch-free)")
+print("🚀 PEN Reply Flask server starting (no scipy)")
 
 # Config
 EMBED_MODEL = "text-embedding-3-small"
@@ -25,17 +24,22 @@ with open("embeddings/metadata.pkl", "rb") as f:
 
 print(f"✅ Loaded {len(metadata)} knowledge chunks.")
 
+# Pure Python cosine similarity function
+def cosine_similarity(a, b):
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = sum(x * x for x in a) ** 0.5
+    norm_b = sum(y * y for y in b) ** 0.5
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)
 
-# Helper: Embed query
-def embed_text(text):
-    result = client.embeddings.create(input=[text], model=EMBED_MODEL)
-    return result.data[0].embedding
-
-
-# Helper: Markdown to HTML
+# Markdown to HTML
 def convert_markdown_to_html(text):
-    return re.sub(r'\[([^\]]+)\]\((https?://[^\)]+)\)', r'<a href="\2" target="_blank">\1</a>', text)
-
+    return re.sub(
+        r'\[([^\]]+)\]\((https?://[^\)]+)\)',
+        r'<a href="\2" target="_blank">\1</a>',
+        text
+    )
 
 @app.route("/reply", methods=["POST"])
 def reply():
@@ -48,16 +52,13 @@ def reply():
 
         print(f"📩 Parent enquiry: {question}")
 
-        query_vec = embed_text(question)
-        # Score similarity against each document
+        query_vec = client.embeddings.create(input=[question], model=EMBED_MODEL).data[0].embedding
+
         scored = []
         for vec, meta in zip(doc_embeddings, metadata):
-            try:
-                similarity = 1 - cosine(query_vec, vec)
-                if similarity >= SIMILARITY_THRESHOLD:
-                    scored.append((similarity, meta))
-            except Exception:
-                continue
+            similarity = cosine_similarity(query_vec, vec)
+            if similarity >= SIMILARITY_THRESHOLD:
+                scored.append((similarity, meta))
 
         top_matches = sorted(scored, key=lambda x: x[0], reverse=True)[:RESPONSE_LIMIT]
 
@@ -66,13 +67,11 @@ def reply():
                 "reply": "<p>Thank you for your enquiry. A member of our admissions team will follow up with you shortly.</p>"
             })
 
-        # Build prompt context
         top_context = ""
         for _, meta in top_matches:
             url = meta.get("url", "")
             top_context += f"{meta['text']}\n[Source]({url})\n---\n"
 
-        # GPT prompt
         prompt = f"""
 You are Jess Ottley-Woodd, Director of Admissions at Bassett House School, a UK prep school.
 
@@ -116,14 +115,12 @@ Bassett House School
             "reply": "<p>⚠️ Internal error generating the reply.</p>"
         }), 500
 
-
 @app.route("/", methods=["GET"])
 def index():
     try:
         return render_template("index.html")
     except Exception as e:
         return f"500 INTERNAL ERROR: {e}", 500
-
 
 if __name__ == "__main__":
     app.run(debug=True)
