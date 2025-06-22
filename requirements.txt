@@ -1,17 +1,14 @@
-## --- Core AI packages ---
-openai>=1.31.0
-sentence-transformers==2.7.0
-torch==2.5.1
-torchaudio==2.5.1
-torchvision==0.18.1
-
-# --- Flask app + env ---
 flask==2.3.3
 flask-cors==4.0.0
 python-dotenv==1.0.1
-
-# --- Utilities ---
-numpy==2.2.0
+openai>=1.31.0
+numpy==1.26.4
 requests
-tqdm
-scipy
+fuzzywuzzy
+python-Levenshtein
+sentence-transformers==2.5.1
+torch==2.1.2
+torchaudio==2.1.2
+boto3
+beautifulsoup4
+gunicorn==20.1.0
