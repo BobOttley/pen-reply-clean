@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>PEN Reply | Smart Admissions Assistant</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background: #f9f9fb;
+      font-family: 'Inter', sans-serif;
+      color: #333;
+    }
+
+    .container {
+      max-width: 720px;
+      margin: 60px auto;
+      background: #fff;
+      padding: 2.5rem;
+      border-radius: 10px;
+      box-shadow: 0 8px 20px rgba(0,0,0,0.05);
+    }
+
+    h1 {
+      font-size: 1.8rem;
+      margin-bottom: 0.25rem;
+      color: #1d2c4d;
+    }
+
+    p.subtext {
+      font-size: 1rem;
+      color: #666;
+      margin-bottom: 1.8rem;
+    }
+
+    textarea {
+      width: 100%;
+      height: 140px;
+      padding: 1rem;
+      font-size: 1rem;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      box-sizing: border-box;
+      margin-bottom: 1rem;
+      resize: vertical;
+    }
+
+    button {
+      background-color: #275EFE;
+      color: white;
+      padding: 0.75rem 1.5rem;
+      font-size: 1rem;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background-color 0.3s;
+    }
+
+    button:hover {
+      background-color: #1e46c5;
+    }
+
+    button:disabled {
+      background-color: #b5c7f7;
+      cursor: not-allowed;
+    }
+
+    .reply-box {
+      display: none;
+      margin-top: 2rem;
+      padding: 1rem;
+      background: #f4f7ff;
+      border-left: 4px solid #275EFE;
+      border-radius: 6px;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      font-family: 'Inter', sans-serif;
+    }
+
+    .error-box {
+      display: none;
+      margin-top: 2rem;
+      padding: 1rem;
+      background: #ffe9e9;
+      border-left: 4px solid #d33c3c;
+      border-radius: 6px;
+      color: #a00;
+    }
+
+    .loader {
+      display: inline-block;
+      margin-left: 10px;
+      width: 16px;
+      height: 16px;
+      border: 2px solid #fff;
+      border-top: 2px solid #275EFE;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      vertical-align: middle;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>PEN Reply</h1>
+    <p class="subtext">Paste a parent email below — our assistant will write a professional, personalised response based on your school's website.</p>
+
+    <textarea id="parentMessage" placeholder="E.g. Do you offer wraparound care or bursaries for siblings?"></textarea>
+    <button id="submitBtn" onclick="submitEmail()">Generate Reply</button>
+    <span id="loading" class="loader" style="display: none;"></span>
+
+    <div id="replyBox" class="reply-box"></div>
+    <div id="errorBox" class="error-box"></div>
+  </div>
+
+  <script>
+    const submitBtn = document.getElementById("submitBtn");
+    const loadingSpinner = document.getElementById("loading");
+    const replyBox = document.getElementById("replyBox");
+    const errorBox = document.getElementById("errorBox");
+    const textarea = document.getElementById("parentMessage");
+
+    textarea.focus();
+
+    async function submitEmail() {
+      const message = textarea.value.trim();
+      if (!message) {
+        alert("Please paste a parent enquiry before submitting.");
+        return;
+      }
+
+      // Reset UI
+      replyBox.style.display = "none";
+      errorBox.style.display = "none";
+      replyBox.textContent = "";
+      errorBox.textContent = "";
+      submitBtn.disabled = true;
+      loadingSpinner.style.display = "inline-block";
+
+      try {
+        const res = await fetch("/reply", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ message })
+        });
+
+        const data = await res.json();
+
+        if (res.ok && data.reply) {
+          replyBox.innerHTML = data.reply;
+          replyBox.style.display = "block";
+    }
+ else {
+          throw new Error(data.error || "No reply generated.");
+        }
+
+      } catch (err) {
+        errorBox.textContent = "⚠️ " + err.message;
+        errorBox.style.display = "block";
+      } finally {
+        submitBtn.disabled = false;
+        loadingSpinner.style.display = "none";
+      }
+    }
+
+    textarea.addEventListener("keydown", function(e) {
+      if (e.key === "Enter" && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        submitEmail();
+      }
+    });
+  </script>
+</body>
+</html>
