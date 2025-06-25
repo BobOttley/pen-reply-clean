@@ -6,4 +6,4 @@ numpy==1.26.4
 gunicorn==20.1.0
 markdown==3.6
 beautifulsoup4==4.12.3
-
+scipy==1.13.0

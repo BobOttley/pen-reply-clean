@@ -1,21 +1,10 @@
 import os, json, pickle, re, numpy as np
-import datetime
-import re
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 from openai import OpenAI
 from dotenv import load_dotenv
-from url_mapping import URL_MAPPING
-from static_qa import STATIC_QA
-
-
-def replace_link_keys(answer):
-    def replacer(match):
-        text = match.group(1)
-        url = URL_MAPPING.get(text, "#")
-        return f"[{text}]({url})"
-    return re.sub(r"\[([^\]]+)\]\(([^)]+)\)", lambda m: replacer(m), answer)
+from scipy.spatial.distance import cosine
 
 # ──────────────────────────────
 # ✅  SET-UP
@@ -31,7 +20,6 @@ EMBED_MODEL               = "text-embedding-3-small"
 SIMILARITY_THRESHOLD      = 0.30
 RESPONSE_LIMIT            = 3
 STANDARD_MATCH_THRESHOLD  = 0.85
-
 
 # ──────────────────────────────
 # 🔒  PII REDACTION
@@ -58,66 +46,16 @@ def embed_text(text: str) -> np.ndarray:
     return np.array(res.data[0].embedding)
 
 def markdown_to_html(text: str) -> str:
-    """Convert markdown links to clickable HTML (keeps anchor text)."""
+    """Convert markdown links to clickable HTML and strip code block markers."""
+    # Strip triple backticks and optional language identifiers (like ```markdown)
+    text = re.sub(r"```(?:\w+)?\n?", "", text)
+    text = text.replace("```", "")
+    # Convert markdown links to clickable HTML
     return re.sub(
         r'\[([^\]]+)\]\((https?://[^\)]+)\)',
         lambda m: f'<a href="{m.group(2)}" target="_blank">{m.group(1)}</a>',
         text
-    ) 
-
-def clean_gpt_email_output(md: str) -> str:
-    """Clean up GPT output to remove markdown/code block labels and subject lines."""
-    md = md.strip()
-    # Remove any triple backticks (and possible markdown label)
-    md = re.sub(r"^```(?:markdown)?", "", md, flags=re.I).strip()
-    md = re.sub(r"```$", "", md, flags=re.I).strip()
-    # Remove 'markdown:' or 'Subject:' at the very start
-    md = re.sub(r"^(markdown:|subject:)[\s]*", "", md, flags=re.I).strip()
-    # Remove accidental 'Subject:' anywhere at the very start of a line
-    md = re.sub(r"^Subject:.*\n?", "", md, flags=re.I)
-    return md.strip()
-
-def cosine_similarity(a, b):
-    """Return cosine similarity between two numpy arrays."""
-    a = np.array(a)
-    b = np.array(b)
-    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
-
-import datetime
-import re
-
-def filter_past_dates(reply, today=None):
-    """Remove lines with event dates before today (in formats like '12 June' or '12 June 2025')."""
-    if not today:
-        today = datetime.datetime.now()
-    date_pattern = re.compile(r'(\d{1,2} [A-Z][a-z]+(?: \d{4})?)')
-    lines = reply.split('\n')
-    filtered = []
-    for line in lines:
-        match = date_pattern.search(line)
-        if match:
-            try:
-                date_str = match.group(1)
-                # Try parsing '12 June 2025' and '12 June'
-                for fmt in ('%d %B %Y', '%d %B'):
-                    try:
-                        dt = datetime.datetime.strptime(date_str, fmt)
-                        if fmt == '%d %B':
-                            dt = dt.replace(year=today.year)
-                        if dt.date() >= today.date():
-                            filtered.append(line)
-                        # else: skip line
-                        break
-                    except Exception:
-                        continue
-            except Exception:
-                filtered.append(line)
-        else:
-            filtered.append(line)
-    return '\n'.join(filtered)
-
-
-   
+    )
 
 # ──────────────────────────────
 # 📚  LOAD SCHOOL KB
@@ -155,7 +93,7 @@ _load_standard_library()
 
 def check_standard_match(q_vec: np.ndarray) -> str:
     if not standard_embeddings: return ""
-    sims = [cosine_similarity(q_vec, emb) for emb in standard_embeddings]
+    sims = [1 - cosine(q_vec, emb) for emb in standard_embeddings]
     best_idx = int(np.argmax(sims))
     if sims[best_idx] >= STANDARD_MATCH_THRESHOLD:
         print(f"🔁 Using template (similarity {sims[best_idx]:.2f})")
@@ -179,21 +117,6 @@ def reply():
         if not question:
             return jsonify({"error":"No message received."}), 400
 
-        # ──────────────
-        # 0) STATIC QA
-        # ──────────────
-        question_lower = question.lower()
-        for k, v in STATIC_QA.items():
-            if k in question_lower:
-                # Convert markdown in static answer to HTML for output
-                reply_html = markdown_to_html(v["answer"])
-                return jsonify({
-                    "reply": reply_html,
-                    "sentiment_score": 10,
-                    "strategy_explanation": "Matched static QA."
-                })
-
-        # Continue as before with vector match, etc.
         q_vec = embed_text(question)
 
         # 1) pre-approved template?
@@ -205,32 +128,67 @@ def reply():
                 "strategy_explanation": "Used approved template."
             })
 
-        # ...rest of your code unchanged...
-
         # 2) sentiment (mini model, cheap)
+       # ──────────────────────────────
+# 2) Sentiment analysis
+# ──────────────────────────────
         sent_prompt = f"""
-Rate the sentiment (1–10) of the enquiry then give a response strategy in JSON:
-{{"score":7,"strategy":"Begin warmly …"}}
+        You are a sentiment analysis assistant working for a UK prep school.
 
-Enquiry:
-\"\"\"{question}\"\"\"""".strip()
+        Rate the sentiment of this enquiry on a scale from 1 (very negative) to 10 (very positive).
+        Then suggest an appropriate admissions response strategy.
 
-        sent_json = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role":"user","content":sent_prompt}],
-            temperature=0.3
-        ).choices[0].message.content.strip()
+        Use British spelling only (e.g. emphasise, personalise, behaviour, programme).
 
+        Return only a bare JSON object in this format:
+        {{
+          "score": <integer 1–10>,
+          "strategy": "<text>"
+        }}
+
+        Enquiry:
+        \"\"\"{question}\"\"\"
+        """.strip()
+
+        # Enforce pure JSON output with no fences or extra text
+        system_msg = {
+            "role": "system",
+            "content": (
+                "Output must be EXACTLY a bare JSON object with keys 'score' "
+                "(integer between 1 and 10) and 'strategy' (string). "
+                "Do NOT include markdown, code fences, or any additional text."
+            )
+        }
+
+        resp_sent = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                system_msg,
+                {"role": "user", "content": sent_prompt}
+            ],
+            temperature=0.0
+        )
+
+        # Grab the raw response
+        sent_json = resp_sent.choices[0].message.content.strip()
+
+        # Strip any stray triple-backticks or ```json fences
+        sent_json = re.sub(r"^```(?:json)?\s*", "", sent_json)
+        sent_json = re.sub(r"\s*```$", "", sent_json)
+
+        # Parse safely, with fallback on error
         try:
             sent = json.loads(sent_json)
-            score = int(sent.get("score",5))
-            strat = sent.get("strategy","")
-        except Exception:
+            score = int(sent.get("score", 5))
+            strat = sent.get("strategy", "")
+        except json.JSONDecodeError as e:
+            print("⚠️ Sentiment parse failed:", e)
+            print("Raw JSON was:", sent_json)
             score, strat = 5, ""
-            print("⚠️ Sentiment parse failed.")
 
-       # 3) KB retrieval
-        sims = [(cosine_similarity(q_vec, vec), meta) for vec, meta in zip(doc_embeddings, metadata)]
+
+        # 3) KB retrieval
+        sims = [(1 - cosine(q_vec, vec), meta) for vec, meta in zip(doc_embeddings, metadata)]
         top = [m for m in sims if m[0] >= SIMILARITY_THRESHOLD]
         top = sorted(top, key=lambda x:x[0], reverse=True)[:RESPONSE_LIMIT]
 
@@ -245,16 +203,8 @@ Enquiry:
         top_context = "\n---\n".join(context_blocks)
 
         # 4) main reply prompt
-
-        from datetime import datetime
-
-        today_date = datetime.now().strftime('%d %B %Y')
-
         prompt = f"""
-
-TODAY'S DATE IS {today_date}.
-
-You are Jess Ottley-Woodd, Director of Admissions at Bassett House School, a UK prep school. Jess is a very friendly helpful and smilly lady who is very well educated. 
+You are Jess Ottley-Woodd, Director of Admissions at Bassett House School, a UK prep school.
 
 You must always use British spelling (e.g. prioritise, organise, programme). Never use American spellings such as prioritize, organize, inquire or center.
 This is strictly enforced in all emails and replies.
@@ -266,23 +216,14 @@ Additional instruction: "{instruction}"
 
 Write a warm, professional email reply using only the school info provided. Follow these strict formatting and tone rules:
 
-- Make your reply sound natural and genuinely human, not like an automated response. Write in a warm, conversational, and professional tone—just as you would if replying directly as Jess Ottley-Woodd. Vary sentence length and structure, avoid clichés or overused phrases, and do not sound formulaic. Use subtle empathy and personal touches where appropriate. If information is not available, say so honestly rather than making something up.
-- ONLY return the email content as plain Markdown, ready to be sent. - Use British spelling at all times (e.g. organise, programme, enrolment)
-- Never say "click here" under any circumstances.
-- If no future open day date is available, do NOT use placeholders like “[insert date here]” or make up a date. Direct parents to the Open Events page using a descriptive link instead, e.g. “For the latest information on upcoming events, please visit our [Open Events page](https://www.bassetths.org.uk/open-events).”
-
+- Use British spelling at all times (e.g. organise, programme, enrolment)
+- Never say "click here" under any circumstances
 - Do not bold or italicise any text using asterisks or markdown (e.g. **Super Curriculum** → just write “Super Curriculum”)
 - Do not CAPITALISE programmes like “Gifted & Talented” or “Super Curriculum” — write them naturally
 - Embed links using Markdown format, with natural, meaningful anchor text
 - Do not show raw URLs
 - Never list links at the bottom
 - Weave all links naturally into the body of the email like a professional school reply
-- Do NOT include "Subject:", "markdown:", triple backticks, or any code block. 
-- Do NOT include any explanations, just the email body itself.
-- Embed source URLs as Markdown links using descriptive, professional anchor text that clearly describes where the link goes (e.g. “registration page”, “Open Events page”, “Admissions information”). Never use generic terms like “website” or “click here”.
-- When you invite a parent to sign up for an open day, register interest, or begin the admissions process, you must always include a direct website link to the specific, relevant page using a clear, descriptive anchor. For example, use “Open Events page” or “Admissions page”, never just “website” or “click here”.
-- If event dates or deadlines are mentioned, always check that they are in the future relative to today. If a date from the knowledge base or question is already past, do not include it—refer to upcoming events or simply direct parents to the latest information or events page instead.
-
 
 Never use anchor phrases like “click here”, “learn more”, or “register here”. 
 Instead, write anchor text that clearly describes the link’s destination.
@@ -292,11 +233,9 @@ Instead, write anchor text that clearly describes the link’s destination.
 ✅ Fee information should be summarised in warm, natural sentences suitable for email
 
 ❌ Never mention specific event dates such as Open Mornings unless they are current.  
+✅ Instead, invite the parent to visit our [Open Events page](https://www.morehouse.org.uk/admissions/our-open-events/) for up-to-date details.
 
 Never repeat the parent’s full name. If a name is present, redact the surname or address them generically.
-
-Do not use any URL not on this list. If you are inviting a parent to register, sign up, or find out more, you must always include the correct, approved link above with an appropriate anchor. If there is no suitable link, direct them to Contact. Never invent or guess URLs or use generic anchors like “website” or “click here”.
-
 
 Parent Email:
 \"\"\"{question}\"\"\"
@@ -311,14 +250,12 @@ Bassett House School
 """.strip()
 
         reply_md = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4o",
             messages=[{"role":"user","content":prompt}],
             temperature=0.4
         ).choices[0].message.content.strip()
-        reply_md = clean_gpt_email_output(reply_md)
-        reply_md = filter_past_dates(reply_md)
-        reply_html = markdown_to_html(reply_md)
 
+        reply_html = markdown_to_html(reply_md)
 
         return jsonify({
             "reply": reply_html,
@@ -362,11 +299,10 @@ Return only the revised reply in Markdown.
 """.strip()
 
         new_md = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4o",
             messages=[{"role":"user","content":prompt}],
             temperature=0.4
         ).choices[0].message.content.strip()
-        new_md = clean_gpt_email_output(new_md)
 
         return jsonify({"reply": markdown_to_html(new_md)})
 
