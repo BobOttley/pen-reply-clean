@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>PEN Reply | Smart Admissions Assistant</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=DM+Serif+Display&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --brand-blue: #003366;
+      --brand-blue-hover: #002244;
+      --sentiment-green: #47B881;
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      background: #f9f9fb;
+      font-family: 'Inter', sans-serif;
+      color: #333;
+    }
+
+    .container {
+      max-width: 720px;
+      margin: 60px auto;
+      background: #fff;
+      padding: 2.5rem;
+      border-radius: 10px;
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.05);
+    }
+
+    h1 {
+      font-size: 2rem;
+      margin-bottom: 0.25rem;
+      font-family: 'DM Serif Display', serif;
+      color: var(--brand-blue);
+    }
+
+    p.subtext {
+      font-size: 1rem;
+      color: #666;
+      margin-bottom: 1.8rem;
+    }
+
+    textarea {
+      width: 100%;
+      height: 140px;
+      padding: 1rem;
+      font-size: 1rem;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      box-sizing: border-box;
+      margin-bottom: 1rem;
+      resize: vertical;
+    }
+
+    button {
+      background-color: var(--brand-blue);
+      color: white;
+      padding: 0.75rem 1.5rem;
+      font-size: 1rem;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background-color 0.3s;
+    }
+
+    button:hover:not(:disabled) {
+      background-color: var(--brand-blue-hover);
+    }
+
+    button:disabled {
+      background-color: #b8c6d6;
+      cursor: not-allowed;
+    }
+
+    .buttons-row {
+      display: flex;
+      gap: 1rem;
+      margin-top: 0.5rem;
+    }
+
+    .reply-box,
+    .sentiment-box {
+      display: none;
+      margin-top: 2rem;
+      padding: 1rem;
+      border-radius: 6px;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      font-family: 'Inter', sans-serif;
+      min-height: 100px;
+      position: relative;
+    }
+
+    .reply-box {
+      background: #eef3f9;
+      border-left: 4px solid var(--brand-blue);
+    }
+
+    .sentiment-box {
+      background: #f4fdf2;
+      border-left: 4px solid var(--sentiment-green);
+      font-size: 0.95rem;
+      color: #2d6240;
+    }
+
+    .error-box {
+      display: none;
+      margin-top: 2rem;
+      padding: 1rem;
+      background: #ffe9e9;
+      border-left: 4px solid #d33c3c;
+      border-radius: 6px;
+      color: #a00;
+      font-weight: 600;
+    }
+
+    .loader {
+      display: inline-block;
+      margin-left: 10px;
+      width: 16px;
+      height: 16px;
+      border: 2px solid #fff;
+      border-top: 2px solid var(--brand-blue);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      vertical-align: middle;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container" role="main">
+    <h1>PEN Reply</h1>
+    <p class="subtext">Paste an email below — PEN.ai will write a professional, personalised response based on Bassett House School.</p>
+
+    <textarea id="parentMessage" aria-label="Email enquiry" placeholder="E.g. Do you offer wraparound care or bursaries for siblings?"></textarea>
+
+    <div class="buttons-row">
+      <button id="submitBtn" type="button">Generate Reply</button>
+      <button id="copyBtn" type="button" disabled>Copy Response</button>
+      <button id="clearBtn" type="button">Clear Text</button>
+      <span id="loading" class="loader" style="display:none;" aria-live="polite" aria-label="Loading"></span>
+    </div>
+
+    <div id="sentimentBox" class="sentiment-box" aria-live="polite" aria-atomic="true"></div>
+    <div id="replyBox" class="reply-box" aria-live="polite" aria-atomic="true"></div>
+    <div id="errorBox" class="error-box" role="alert"></div>
+  </div>
+
+  <script>
+    const submitBtn = document.getElementById("submitBtn");
+    const copyBtn = document.getElementById("copyBtn");
+    const clearBtn = document.getElementById("clearBtn");
+    const loadingSp = document.getElementById("loading");
+    const replyBox = document.getElementById("replyBox");
+    const sentimentBox = document.getElementById("sentimentBox");
+    const errorBox = document.getElementById("errorBox");
+    const textarea = document.getElementById("parentMessage");
+
+    let lastReply = '';
+
+    textarea.focus();
+
+    submitBtn.addEventListener("click", submitEmail);
+    clearBtn.addEventListener("click", clearAll);
+    copyBtn.addEventListener("click", copyReply);
+
+    textarea.addEventListener("keydown", (e) =>

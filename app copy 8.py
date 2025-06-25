@@ -129,63 +129,38 @@ def reply():
             })
 
         # 2) sentiment (mini model, cheap)
-       # ──────────────────────────────
-# 2) Sentiment analysis
-# ──────────────────────────────
         sent_prompt = f"""
         You are a sentiment analysis assistant working for a UK prep school.
 
-        Rate the sentiment of this enquiry on a scale from 1 (very negative) to 10 (very positive).
-        Then suggest an appropriate admissions response strategy.
+        Rate the **sentiment of this enquiry** on a scale from 1 (very negative) to 10 (very positive).  
+        Then suggest an appropriate **admissions response strategy**.
 
-        Use British spelling only (e.g. emphasise, personalise, behaviour, programme).
+        ⚠️ Use **British spelling only** (e.g. emphasise, personalise, behaviour, programme).
 
-        Return only a bare JSON object in this format:
+        Return only valid JSON in this format:
         {{
-          "score": <integer 1–10>,
-          "strategy": "<text>"
+          "score": 1-10,
+          "strategy": "..."
         }}
 
         Enquiry:
         \"\"\"{question}\"\"\"
         """.strip()
 
-        # Enforce pure JSON output with no fences or extra text
-        system_msg = {
-            "role": "system",
-            "content": (
-                "Output must be EXACTLY a bare JSON object with keys 'score' "
-                "(integer between 1 and 10) and 'strategy' (string). "
-                "Do NOT include markdown, code fences, or any additional text."
-            )
-        }
 
-        resp_sent = client.chat.completions.create(
+        sent_json = client.chat.completions.create(
             model="gpt-4o",
-            messages=[
-                system_msg,
-                {"role": "user", "content": sent_prompt}
-            ],
-            temperature=0.0
-        )
+            messages=[{"role":"user","content":sent_prompt}],
+            temperature=0.3
+        ).choices[0].message.content.strip()
 
-        # Grab the raw response
-        sent_json = resp_sent.choices[0].message.content.strip()
-
-        # Strip any stray triple-backticks or ```json fences
-        sent_json = re.sub(r"^```(?:json)?\s*", "", sent_json)
-        sent_json = re.sub(r"\s*```$", "", sent_json)
-
-        # Parse safely, with fallback on error
         try:
             sent = json.loads(sent_json)
-            score = int(sent.get("score", 5))
-            strat = sent.get("strategy", "")
-        except json.JSONDecodeError as e:
-            print("⚠️ Sentiment parse failed:", e)
-            print("Raw JSON was:", sent_json)
+            score = int(sent.get("score",5))
+            strat = sent.get("strategy","")
+        except Exception:
             score, strat = 5, ""
-
+            print("⚠️ Sentiment parse failed.")
 
         # 3) KB retrieval
         sims = [(1 - cosine(q_vec, vec), meta) for vec, meta in zip(doc_embeddings, metadata)]

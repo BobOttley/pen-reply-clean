@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>PEN Reply | Smart Admissions Assistant</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=DM+Serif+Display&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --brand-blue: #003366;
+      --brand-blue-hover: #002244;
+      --sentiment-green: #47B881;
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      background: #f9f9fb;
+      font-family: 'Inter', sans-serif;
+      color: #333;
+    }
+
+    .container {
+      max-width: 720px;
+      margin: 60px auto;
+      background: #fff;
+      padding: 2.5rem;
+      border-radius: 10px;
+      box-shadow: 0 8px 20px rgba(0,0,0,0.05);
+    }
+
+    h1 {
+      font-size: 2rem;
+      margin-bottom: 0.25rem;
+      font-family: 'DM Serif Display', serif;
+      color: var(--brand-blue);
+    }
+
+    p.subtext {
+      font-size: 1rem;
+      color: #666;
+      margin-bottom: 1.8rem;
+    }
+
+    textarea {
+      width: 100%;
+      padding: 1rem;
+      font-size: 1rem;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      box-sizing: border-box;
+      margin-bottom: 1rem;
+      resize: vertical;
+    }
+
+    textarea#parentMessage {
+      height: 140px;
+    }
+
+    textarea#instructionBox,
+    textarea#reviseBox {
+      height: 80px;
+    }
+
+    button {
+      background-color: var(--brand-blue);
+      color: white;
+      padding: 0.75rem 1.5rem;
+      font-size: 1rem;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background-color 0.3s;
+    }
+
+    button:hover:not(:disabled) {
+      background-color: var(--brand-blue-hover);
+    }
+
+    button:disabled {
+      background-color: #b8c6d6;
+      cursor: not-allowed;
+    }
+
+    .buttons-row {
+      display: flex;
+      gap: 1rem;
+      margin-top: 0.5rem;
+    }
+
+    .reply-box,
+    .sentiment-box {
+      display: none;
+      margin-top: 2rem;
+      padding: 1rem;
+      border-radius: 6px;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      font-family: 'Inter', sans-serif;
+      min-height: 100px;
+      position: relative;
+    }
+
+    .reply-box {
+      background: #eef3f9;
+      border-left: 4px solid var(--brand-blue);
+    }
+
+    .sentiment-box {
+      background: #f4fdf2;
+      border-left: 4px solid var(--sentiment-green);
+      font-size: 0.95rem;
+      color: #2d6240;
+    }
+
+    .error-box {
+      display: none;
+      margin-top: 2rem;
+      padding: 1rem;
+      background: #ffe9e9;
+      border-left: 4px solid #d33c3c;
+      border-radius: 6px;
+      color: #a00;
+      font-weight: 600;
+    }
+
+    .loader {
+      display: inline-block;
+      margin-left: 10px;
+      width: 16px;
+      height: 16px;
+      border: 2px solid #fff;
+      border-top: 2px solid var(--brand-blue);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      vertical-align: middle;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .revise-section {
+      display: none;
+      margin-top: 2rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container" role="main">
+    <h1>PEN Reply</h1>
+    <p class="subtext">Paste an email below — PEN.ai will write a professional, personalised response based on Bassett House School.</p>
+
+    <textarea id="parentMessage" aria-label="Email enquiry" placeholder="E.g. Do you offer wraparound care or bursaries for siblings?"></textarea>
+
+    <label for="instructionBox">Optional Instruction:</label>
+    <textarea id="instructionBox" rows="2" placeholder="E.g. Make the reply warmer, add more on wraparound care, keep it short…"></textarea>
+
+    <div class="buttons-row">
+      <button id="submitBtn" type="button">Generate Reply</button>
+      <button id="copyBtn" type="button" disabled>Copy Response</button>
+      <button id="clearBtn" type="button">Clear Text</button>
+      <span id="loading" class="loader" style="display:none;" aria-live="polite" aria-label="Loading"></span>
+    </div>
+
+    <div id="sentimentBox" class="sentiment-box" aria-live="polite" aria-atomic="true"></div>
+    <div id="replyBox" class="reply-box" aria-live="polite" aria-atomic="true"></div>
+    <div id="errorBox" class="error-box" role="alert"></div>
+
+    <div class="revise-section" id="reviseSection">
+      <label for="reviseBox">Refine this reply with an instruction:</label>
+      <textarea id="reviseBox" placeholder="E.g. Shorten the reply, remove bursary link, make it more enthusiastic…"></textarea>
+      <div class="buttons-row">
+        <button id="reviseBtn" type="button">Revise Response</button>
+        <button id="saveBtn" type="button">Save as Approved Template</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const submitBtn     = document.getElementById("submitBtn");
+    const copyBtn       = document.getElementById("copyBtn");
+    const clearBtn      = document.getElementById("clearBtn");
+    const loadingSp     = document.getElementById("loading");
+    const replyBox      = document.getElementById("replyBox");
+    const sentimentBox  = document.getElementById("sentimentBox");
+    const errorBox      = document.getElementById("errorBox");
+    const textarea      = document.getElementById("parentMessage");
+    const instructionEl = document.getElementById("instructionBox");
+    const reviseEl      = document.getElementById("reviseBox");
+    const reviseBtn     = document.getElementById("reviseBtn");
+    const saveBtn       = document.getElementById("saveBtn");
+    const reviseSection = document.getElementById("reviseSection");
+
+    let lastMessage = '';
+    let lastReply = '';
+
+    textarea.focus();
+
+    submitBtn.addEventListener("click", submitEmail);
+    clearBtn.addEventListener("click", clearAll);
+    copyBtn.addEventListener("click", copyReply);
+    reviseBtn.addEventListener("click", reviseReply);
+    saveBtn.addEventListener("click", saveTemplate);
+
+    async function submitEmail() {
+      const message = textarea.value.trim();
+      const instruction = instructionEl.value.trim();
+
+      if (!message) {
+        alert("Please paste an email before submitting.");
+        return;
+      }
+
+      replyBox.innerHTML = "<em>Generating new response...</em>";
+      replyBox.style.display = "block";
+      sentimentBox.style.display = "none";
+      sentimentBox.textContent = "";
+      errorBox.style.display = "none";
+      errorBox.textContent = "";
+      reviseSection.style.display = "none";
+      copyBtn.disabled = true;
+
+      submitBtn.disabled = true;
+      copyBtn.disabled = true;
+      loadingSp.style.display = "inline-block";
+
+      try {
+        const res = await fetch("/reply", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message, instruction })
+        });
+
+        const data = await res.json();
+
+        if (res.ok && data.reply) {
+          lastMessage = message;
+          lastReply = data.reply;
+          replyBox.innerHTML = data.reply;
+          replyBox.style.display = "block";
+          reviseSection.style.display = "block";
+          copyBtn.disabled = false;
+
+          if (data.sentiment_score !== undefined && data.strategy_explanation) {
+            sentimentBox.innerHTML = `
+              <strong>Sentiment Score:</strong> ${data.sentiment_score}/10<br>
+              <strong>Strategy Applied:</strong> ${data.strategy_explanation}
+            `;
+            sentimentBox.style.display = "block";
+          }
+        } else {
+          throw new Error(data.error || "No reply generated.");
+        }
+      } catch (err) {
+        errorBox.textContent = "⚠️ " + err.message;
+        errorBox.style.display = "block";
+        lastReply = '';
+        copyBtn.disabled = true;
+      } finally {
+        submitBtn.disabled = false;
+        loadingSp.style.display = "none";
+      }
+    }
+
+    async function reviseReply() {
+      const instruction = reviseEl.value.trim();
+      if (!instruction || !lastMessage || !lastReply) {
+        alert("Missing instruction or previous reply.");
+        return;
+      }
+
+  // Visual feedback during revision
+      replyBox.innerHTML = "<em>Revising response...</em>";
+      replyBox.style.display = "block";
+      sentimentBox.style.display = "none";
+      sentimentBox.textContent = "";
+      errorBox.style.display = "none";
+      errorBox.textContent = "";
+      copyBtn.disabled = true;
+      loadingSp.style.display = "inline-block";
+
+      try {
+        const res = await fetch("/revise", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            message: lastMessage,
+            previous_reply: lastReply,
+            instruction
+          })
+        });
+
+        const data = await res.json();
+        if (res.ok && data.reply) {
+          lastReply = data.reply;
+          replyBox.innerHTML = data.reply;
+          reviseSection.style.display = "block";
+          copyBtn.disabled = false;
+        } else {
+          throw new Error(data.error || "No revision generated.");
+        }
+      } catch (err) {
+        errorBox.textContent = "⚠️ " + err.message;
+        errorBox.style.display = "block";
+      } finally {
+        loadingSp.style.display = "none";
+      }
+    }
+
+
+    async function saveTemplate() {
+      if (!lastMessage || !lastReply) {
+        alert("Nothing to save.");
+        return;
+      }
+
+      try {
+        await fetch("/save-standard", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            message: lastMessage,
+            reply: lastReply
+          })
+        });
+        alert("Reply saved as a standard.");
+      } catch (err) {
+        alert("Failed to save template.");
+      }
+    }
+
+    function clearAll() {
+      textarea.value = '';
+      instructionEl.value = '';
+      reviseEl.value = '';
+      replyBox.textContent = '';
+      sentimentBox.textContent = '';
+      errorBox.textContent = '';
+      reviseSection.style.display = "none";
+      [replyBox, sentimentBox, errorBox].forEach(el => el.style.display = "none");
+      lastReply = '';
+      lastMessage = '';
+      copyBtn.disabled = true;
+      textarea.focus();
+    }
+
+    function copyReply() {
+      if (!lastReply) {
+        alert("There is no reply to copy.");
+        return;
+      }
+      navigator.clipboard.writeText(lastReply).then(() => {
+        alert("Response copied to clipboard.");
+      }).catch(() => {
+        alert("Failed to copy response.");
+      });
+    }
+  </script>
+</body>
+</html>
