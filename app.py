@@ -225,11 +225,18 @@ def generate_reply():
 
         # 2) sentiment (mini model, cheap)
         sent_prompt = f"""
-Rate the sentiment (1–10) of the enquiry then give a response strategy in JSON:
-{{"score":7,"strategy":"Begin warmly …"}}
+        You are an expert school admissions assistant.
 
-Enquiry:
-\"\"\"{question}\"\"\"""".strip()
+        Please analyse the following parent enquiry and return a JSON object with two keys:
+
+        - "score": an integer from 1 (very negative) to 10 (very positive)
+        - "strategy": a maximum 30 words strategy for how to reply to the message
+
+        Only return the JSON object — no extra explanation.
+
+        Enquiry:
+        \"\"\"{question}\"\"\"
+        """.strip()
 
         sent_json = client.chat.completions.create(
             model="gpt-4o-mini",
