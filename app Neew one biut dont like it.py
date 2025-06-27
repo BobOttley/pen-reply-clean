@@ -1,47 +1,64 @@
+import json, pickle, re, numpy as np
+import datetime
+import threading
 import os
-import json
-import pickle
-import re
-import numpy as np
+import difflib
+
+STANDARD_RESPONSES_FILE = "standard_responses.json"
+LOCK = threading.Lock()
+
+
 from datetime import datetime
-from markdown import markdown
 from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 from openai import OpenAI
 from dotenv import load_dotenv
-from markdownify import markdownify as html_to_markdown
+from url_mapping import URL_MAPPING, URL_ALIASES, BAD_ANCHORS
+
+from static_qa import STATIC_QA
 
 
-def parse_url_box(url_text):
-    """
-    Parses both newline-separated and semicolon-separated anchor=URL entries.
-    """
-    url_map = {}
-    parts = re.split(r'[;\n]+', url_text.strip())
-    for part in parts:
-        if '=' in part:
-            anchor, url = part.split('=', 1)
-            url_map[anchor.strip()] = url.strip()
-    return url_map
+def replace_link_keys(answer):
+    def replacer(match):
+        anchor_text = match.group(1).strip()
 
+        # 🔁 Replace bad anchor text with clean alias
+        if anchor_text.lower() in BAD_ANCHORS:
+            anchor_text = BAD_ANCHORS[anchor_text.lower()]
 
+        # ✅ Direct match
+        if anchor_text in URL_MAPPING:
+            url = URL_MAPPING[anchor_text]
+        else:
+            # 🔁 Try exact alias
+            alias_key = URL_ALIASES.get(anchor_text.lower())
+            if alias_key and alias_key in URL_MAPPING:
+                url = URL_MAPPING[alias_key]
+            else:
+                # 🔍 NEW: Try fuzzy match as last resort
+                from difflib import get_close_matches
 
+                # Try fuzzy against URL_MAPPING keys
+                candidates = list(URL_MAPPING.keys())
+                close = get_close_matches(anchor_text, candidates, n=1, cutoff=0.75)
+                if close:
+                    url = URL_MAPPING[close[0]]
+                else:
+                    url = "#"
 
-def insert_links(text, url_map):
-    """
-    Finds any words/phrases in the text that match the anchors and replaces
-    them with Markdown links (e.g. Head → [Head](...)).
-    """
-    def safe_replace(match):
-        word = match.group(0)
-        for anchor, url in url_map.items():
-            if word.lower() == anchor.lower():
-                return f"[{word}]({url})"
-        return word
+        print(f"🔍 Anchor: '{anchor_text}' → {url}")
+        return f"[{anchor_text}]({url})"
 
-    sorted_anchors = sorted(url_map.keys(), key=len, reverse=True)
-    pattern = r'\b(' + '|'.join(re.escape(a) for a in sorted_anchors) + r')\b'
-    return re.sub(pattern, safe_replace, text, flags=re.IGNORECASE)
+    return re.sub(r"\[([^\]]+)\]\(([^)]+)\)", lambda m: replacer(m), answer)
+
+def find_static_matches(question, max_matches=3, cutoff=0.75):
+    question_lower = question.lower().strip()
+    matches = []
+    for q_key in STATIC_QA.keys():
+        if difflib.get_close_matches(question_lower, [q_key], n=1, cutoff=cutoff):
+            matches.append(q_key)
+    return matches[:max_matches]
+
 
 # ──────────────────────────────
 # ✅  SET-UP
@@ -58,46 +75,21 @@ SIMILARITY_THRESHOLD      = 0.30
 RESPONSE_LIMIT            = 3
 STANDARD_MATCH_THRESHOLD  = 0.85
 
+
 # ──────────────────────────────
 # 🔒  PII REDACTION
 # ──────────────────────────────
 PII_PATTERNS = [
-    r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",                # emails
-    r"\b(?:\+44\s?7\d{3}|\(?07\d{3}\)?)\s?\d{3}\s?\d{3}\b",                # UK mobile
-    r"\b(?:\+44\s?1\d{3}|\(?01\d{3}\)?|\(?02\d{3}\)?)\s?\d{3}\s?\d{3,4}\b", # UK landline
-    r"\+?\d[\d\s\-().]{7,}\d",                                             # general int’l format
-    r"\b[A-Z]{1,2}\d[A-Z\d]? ?\d[A-Z]{2}\b",                               # UK postcode
+    r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",       # emails
+    r"\b\d{3}[-.\s]??\d{3}[-.\s]??\d{4}\b",                      # US-style phone
+    r"\+?\d[\d\s\-]{7,}\d",                                      # int’l phone
+    r"\b[A-Z]{1,2}\d[A-Z\d]? ?\d[A-Z]{2}\b",                    # UK postcode
 ]
-
-def remove_personal_info(text: str) -> str:
-    # Basic PII redaction
+def remove_personal_info(text:str)->str:
     for pat in PII_PATTERNS:
         text = re.sub(pat, "[redacted]", text, flags=re.I)
-
-    # Remove intros like "My name is Mr Smith", "I'm Mrs Jones"
-    text = re.sub(
-        r"\b(my name is|i am|i’m|i’m called)\s+(mr\.?|mrs\.?|ms\.?|miss)?\s*[A-Z][a-z]+\b",
-        "my name is [redacted]",
-        text,
-        flags=re.I
-    )
-
-    # Remove "Dear Mr Carter", "Dear Ms Jones"
-    text = re.sub(
-        r"\bDear\s+(Mr\.?|Mrs\.?|Ms\.?|Miss)?\s*[A-Z][a-z]+\b",
-        "Dear [redacted]",
-        text,
-        flags=re.I
-    )
-
-    # Remove sign-offs like "Regards, John"
-    text = re.sub(
-        r"\b(?:regards|thanks|thank you|sincerely|best wishes|kind regards)[,]?\s+[A-Z][a-z]+\b",
-        "[redacted]",
-        text,
-        flags=re.I
-    )
-
+    # crude “My name is …” removal
+    text = re.sub(r"\bmy name is ([A-Z][a-z]+)\b", "my name is [redacted]", text, flags=re.I)
     return text
 
 # ──────────────────────────────
@@ -134,16 +126,75 @@ def cosine_similarity(a, b):
     b = np.array(b)
     return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 
+import datetime
+import re
 
-   
+def filter_past_dates(reply, today=None):
+    """Remove lines with event dates before today (in formats like '12 June' or '12 June 2025')."""
+    if not today:
+        today = datetime.datetime.now()
+    date_pattern = re.compile(r'(\d{1,2} [A-Z][a-z]+(?: \d{4})?)')
+    lines = reply.split('\n')
+    filtered = []
+    for line in lines:
+        match = date_pattern.search(line)
+        if match:
+            try:
+                date_str = match.group(1)
+                # Try parsing '12 June 2025' and '12 June'
+                for fmt in ('%d %B %Y', '%d %B'):
+                    try:
+                        dt = datetime.datetime.strptime(date_str, fmt)
+                        if fmt == '%d %B':
+                            dt = dt.replace(year=today.year)
+                        if dt.date() >= today.date():
+                            filtered.append(line)
+                        # else: skip line
+                        break
+                    except Exception:
+                        continue
+            except Exception:
+                filtered.append(line)
+        else:
+            filtered.append(line)
+    return '\n'.join(filtered)
+
+def load_standards():
+    if not os.path.exists(STANDARD_RESPONSES_FILE):
+        return []
+    with open(STANDARD_RESPONSES_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+def save_standards(data):
+    with LOCK:
+        with open(STANDARD_RESPONSES_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+
+    def find_static_matches(question, max_matches=3, cutoff=0.55):
+        from difflib import SequenceMatcher
+        question_lower = question.lower().strip()
+        matches = []
+
+        for q_key in STATIC_QA.keys():
+            score = SequenceMatcher(None, question_lower, q_key).ratio()
+            print(f"🧪 Match score: '{q_key}' = {score:.2f}")
+            if score >= cutoff:
+                matches.append((q_key, score))
+
+        matches.sort(key=lambda x: x[1], reverse=True)
+        return [m[0] for m in matches[:max_matches]]
+
+
 
 # ──────────────────────────────
 # 📚  LOAD SCHOOL KB
 # ──────────────────────────────
-with open("embeddings/metadata.pkl", "rb") as f:
+with open("output/metadata.pkl", "rb") as f:
+
     kb = pickle.load(f)
     doc_embeddings = np.array(kb["embeddings"])
-    metadata = kb["metadata"]
+    metadata       = kb["metadata"]
+print(f"✅ Loaded {len(metadata)} knowledge chunks.")
 
 # ──────────────────────────────
 # 📁  LOAD SAVED STANDARD RESPONSES
@@ -183,12 +234,10 @@ def check_standard_match(q_vec: np.ndarray) -> str:
 # 📨  POST /reply
 # ──────────────────────────────
 @app.route("/reply", methods=["POST"])
-def generate_reply():
+def reply():
     try:
         body = request.get_json(force=True)
         question_raw = (body.get("message") or "").strip()
-        url_box_text = (body.get("url_box") or "").strip()
-        url_map = parse_url_box(url_box_text)
         instruction_raw = (body.get("instruction") or "").strip()
 
         # 🔒 sanitise
@@ -198,30 +247,40 @@ def generate_reply():
         if not question:
             return jsonify({"error":"No message received."}), 400
 
+        # ──────────────
+        # 0) STATIC QA
+        # ──────────────
+            # 🔍 Try Static QA multi-match
+        static_matches = find_static_matches(question, max_matches=3, cutoff=0.75)
+        print(f"🔎 STATIC MATCHES FOUND: {static_matches}")
+        if static_matches:
+            replies = []
+            for match in static_matches:
+                answer = STATIC_QA[match]["answer"]
+                answer = replace_link_keys(answer)
+                replies.append(markdown_to_html(answer))
+
+            combined_reply = "<br><br>".join(replies)
+            return jsonify({
+                "reply": clean_html(combined_reply),
+                "strategy_explanation": f"Matched {len(static_matches)} Static QA item(s)."
+            })
+
+
+
+        # Continue as before with vector match, etc.
         q_vec = embed_text(question)
 
         # 1) pre-approved template?
         matched = check_standard_match(q_vec)
         if matched:
-            # If matched is a string, no URL is available
-            if isinstance(matched, str):
-                return jsonify({
-                    "reply": matched,
-                    "sentiment_score": 10,
-                    "strategy_explanation": "Used approved template.",
-                    "url": "",
-                    "link_label": ""
-                })
-            # If matched is a dict with 'reply', 'url', and 'link_label'
-            else:
-                return jsonify({
-                    "reply": matched.get("reply", ""),
-                    "sentiment_score": 10,
-                    "strategy_explanation": "Used approved template.",
-                    "url": matched.get("url", ""),
-                    "link_label": matched.get("link_label", "")
-                })
+            return jsonify({
+                "reply": matched,
+                "sentiment_score": 10,
+                "strategy_explanation": "Used approved template."
+            })
 
+        # ...rest of your code unchanged...
 
         # 2) sentiment (mini model, cheap)
         sent_prompt = f"""
@@ -245,20 +304,18 @@ Enquiry:
             score, strat = 5, ""
             print("⚠️ Sentiment parse failed.")
 
-        # 3) KB retrieval
+       # 3) KB retrieval
         sims = [(cosine_similarity(q_vec, vec), meta) for vec, meta in zip(doc_embeddings, metadata)]
         top = [m for m in sims if m[0] >= SIMILARITY_THRESHOLD]
         top = sorted(top, key=lambda x:x[0], reverse=True)[:RESPONSE_LIMIT]
 
         if not top:
-            return jsonify({
-                "reply":"<p>Thank you for your enquiry. A member of our admissions team will contact you shortly.</p>",
-                "sentiment_score":score,"strategy_explanation":strat
-            })
-
-        context_blocks = [f"{m['text']}\n[Info source]({m.get('url','')})" if m.get('url') else m['text']
-                          for _,m in top]
-        top_context = "\n---\n".join(context_blocks)
+            print("⚠️ No metadata matches — using GPT without context.")
+            top_context = "No relevant metadata found."
+        else:
+            context_blocks = [f"{m['text']}\n[Info source]({m.get('url','')})" if m.get('url') else m['text']
+                              for _,m in top]
+            top_context = "\n---\n".join(context_blocks)
 
         # 4) main reply prompt
 
@@ -304,33 +361,17 @@ Bassett House School
             temperature=0.4
         ).choices[0].message.content.strip()
         reply_md = clean_gpt_email_output(reply_md)
+        reply_md = filter_past_dates(reply_md)
+        reply_md = replace_link_keys(reply_md)  # 🔹 Inject correct URLs from mapping
+        print("🔗 Link-mapped Markdown:\n", reply_md)
+        reply_html = markdown_to_html(reply_md)
 
 
-        # Format the reply
-        reply_md = insert_links(reply_md, url_map)
-        reply_html = markdown(reply_md)
-
-
-        # ✅ Extract URLs from HTML
-        import re
-
-        def extract_links_from_html(html):
-            matches = re.findall(r'<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', html)
-            return [(text.strip(), url.strip()) for url, text in matches]
-
-        links = extract_links_from_html(reply_html)
-        matched_url = links[0][1] if links else ""
-        matched_source = links[0][0] if links else ""
-
-        # ✅ Return enriched result
         return jsonify({
             "reply": reply_html,
             "sentiment_score": score,
-            "strategy_explanation": strat,
-            "url": matched_url,
-            "link_label": matched_source
+            "strategy_explanation": strat
         })
-
 
     except Exception as e:
         print(f"❌ REPLY ERROR: {e}")
@@ -339,22 +380,19 @@ Bassett House School
 # ──────────────────────────────
 # ✏️  POST /revise
 # ──────────────────────────────
-
 @app.route("/revise", methods=["POST"])
 def revise():
     try:
         body = request.get_json(force=True)
-        message_raw   = (body.get("message") or "").strip()
-        prev_reply    = (body.get("previous_reply") or "").strip()
+        message_raw  = (body.get("message") or "").strip()
+        prev_reply   = (body.get("previous_reply") or "").strip()  # already HTML
         instruction_raw = (body.get("instruction") or "").strip()
-        url_box_text  = (body.get("url_box") or "").strip()
 
-        if not (message_raw and prev_reply):
+        if not (message_raw and prev_reply and instruction_raw):
             return jsonify({"error":"Missing fields."}), 400
 
-        message     = remove_personal_info(message_raw)
-        instruction = remove_personal_info(instruction_raw)
-        url_map     = parse_url_box(url_box_text)
+        message    = remove_personal_info(message_raw)
+        instruction= remove_personal_info(instruction_raw)
 
         prompt = f"""
 Revise the admissions reply below according to the instruction.
@@ -375,12 +413,18 @@ Return only the revised reply in Markdown.
             messages=[{"role":"user","content":prompt}],
             temperature=0.4
         ).choices[0].message.content.strip()
+
         new_md = clean_gpt_email_output(new_md)
+        new_md = replace_link_keys(new_md)  # 🔧 Map anchors to correct URLs
+        # Optional (recommended): strip hallucinated external links
+        new_md = re.sub(
+            r"\[([^\]]+)\]\((https?://[^)]+)\)",
+            lambda m: m.group(0) if m.group(2).startswith("https://www.bassetths.org.uk") else f"[{m.group(1)}](#)",
+            new_md
+        )
 
-        # 🔗 Insert anchor links (if provided)
-        new_md_linked = insert_links(new_md, url_map)
+        return jsonify({"reply": markdown_to_html(new_md)})
 
-        return jsonify({"reply": markdown_to_html(new_md_linked)})
 
     except Exception as e:
         print(f"❌ REVISION ERROR: {e}")
@@ -391,34 +435,27 @@ Return only the revised reply in Markdown.
 # ──────────────────────────────
 @app.route("/save-standard", methods=["POST"])
 def save_standard():
-    try:
-        body = request.get_json(force=True)
-        msg_raw = (body.get("message") or "").strip()
-        reply   = (body.get("reply")   or "").strip()
+    data = request.json
+    enquiry = data.get("message", "").strip()
+    reply = data.get("reply", "").strip()
+    urls = data.get("urls", [])
 
-        if not (msg_raw and reply):
-            return jsonify({"status":"error","message":"Missing fields"}), 400
+    if not enquiry or not reply:
+        return jsonify({"error": "Missing enquiry or reply"}), 400
 
-        msg_redacted = remove_personal_info(msg_raw)
+    standards = load_standards()
+    updated = False
+    for item in standards:
+        if item["enquiry"].lower() == enquiry.lower():
+            item["reply"] = reply
+            item["urls"] = urls
+            updated = True
+            break
+    if not updated:
+        standards.append({"enquiry": enquiry, "reply": reply, "urls": urls})
 
-        # append & persist
-        record = {"timestamp":datetime.now().isoformat(),"message":msg_redacted,"reply":reply}
-        path="standard_responses.json"
-        data=[]
-        if os.path.exists(path):
-            with open(path,"r") as f: data=json.load(f)
-        data.append(record)
-        with open(path,"w") as f: json.dump(data,f,indent=2)
-
-        # in-memory
-        standard_messages.append(msg_redacted)
-        standard_embeddings.append(embed_text(msg_redacted))
-        standard_replies.append(reply)
-
-        return jsonify({"status":"ok"})
-    except Exception as e:
-        print(f"❌ SAVE ERROR: {e}")
-        return jsonify({"status":"error","message":"Save failed"}),500
+    save_standards(standards)
+    return jsonify({"status": "saved"})
 
 # ──────────────────────────────
 # 🌐  SERVE FRONT END
@@ -429,5 +466,9 @@ def index(): return render_template("index.html")
 # ──────────────────────────────
 # ▶️  MAIN
 # ──────────────────────────────
+
+import os
+
 if __name__ == "__main__":
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 10000))  # Default to 10000 if PORT not set
+    app.run(host="0.0.0.0", port=port)

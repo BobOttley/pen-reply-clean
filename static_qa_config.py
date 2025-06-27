@@ -65,23 +65,5 @@ STATIC_QA = {
             "Jess Ottley-Woodd  \nDirector of Admissions  \nBassett House School"
         ),
         "tags": ["contact", "admissions", "email", "phone"]
-    },
-    "do we need to register in advance": {
-    "answer": (
-        "Please note that your child must be formally registered with us to attend a Stay & Play session. "
-        "You can find the registration form on our [Apply for a Place](https://www.bassetths.org.uk/admissions/apply-for-a-place/) page.\n\n"
-        "Jess Ottley-Woodd  \nDirector of Admissions  \nBassett House School"
-    ),
-    "tags": ["register", "booking", "form", "stay and play"]
-    },
-
-    "do you offer taster sessions or play mornings": {
-    "answer": (
-        "Yes, our [Stay & Play](https://www.bassetths.org.uk/admissions/attend-a-stay-and-play/) sessions serve as informal taster mornings "
-        "for prospective Nursery and Reception families. You’ll have the chance to meet our team and see your child explore our learning space.\n\n"
-        "Jess Ottley-Woodd  \nDirector of Admissions  \nBassett House School"
-    ),
-    "tags": ["taster", "play", "reception", "nursery", "stay and play"]
-}
-
+    }
 }

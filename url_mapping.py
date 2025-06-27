@@ -45,5 +45,148 @@ URL_MAPPING = {
     "Governance": "https://www.bassetths.org.uk/about/governance/",
     "Dukes Education": "https://www.bassetths.org.uk/about/dukes-education/",
     "Our Aims, Mission & Values": "https://www.bassetths.org.uk/about/our-aims-mission-values/",
-    "Reviews & Reports": "https://www.bassetths.org.uk/about/reviews-reports/"
+    "Reviews & Reports": "https://www.bassetths.org.uk/about/reviews-reports/",
+    "the Stay & Play page": "https://www.bassetths.org.uk/admissions/attend-a-stay-and-play/"
+
 }
+
+# 🔁 Optional keyword-based aliases to support flexible matching
+URL_ALIASES = {
+    # Fees and cost
+    "fees": "Fees",
+    "school fees": "Fees",
+    "fee structure": "Fees",
+    "costs": "Fees",
+    "tuition": "Fees",
+    "payment information": "Fees",
+    "how much does it cost": "Fees",
+
+    # Prospectus
+    "prospectus": "Enquiry & Prospectus",
+    "request a prospectus": "Enquiry & Prospectus",
+    "download our prospectus": "Enquiry & Prospectus",
+    "enquiry form": "Enquiry & Prospectus",
+    "admissions enquiry": "Enquiry & Prospectus",
+
+    # Admissions process
+    "apply": "Apply for a Place",
+    "application process": "Apply for a Place",
+    "how to apply": "Apply for a Place",
+    "admissions journey": "The Admissions Journey",
+    "how to join": "The Admissions Journey",
+    "registration process": "The Admissions Journey",
+
+    # Visiting the school
+    "visit": "Visit Us",
+    "book a visit": "Visit Us",
+    "visit the school": "Visit Us",
+    "school visit": "Visit Us",
+    "arrange a visit": "Visit Us",
+
+    # Events
+    "open day": "Attend a Stay & Play",
+    "open events": "Attend a Stay & Play",
+    "stay and play": "Attend a Stay & Play",
+    "play session": "Attend a Stay & Play",
+    "nursery play morning": "Attend a Stay & Play",
+
+    # Calendar
+    "term dates": "Term Dates",
+    "school calendar": "Events Calendar",
+    "key dates": "Events Calendar",
+    "holiday dates": "Term Dates",
+
+    # Entry points
+    "nursery": "Nursery School",
+    "nursery entry": "Nursery & Reception entry in September 2025",
+    "nursery admissions": "Nursery & Reception entry in September 2025",
+    "reception": "Nursery & Reception entry in September 2025",
+    "early years": "Nursery School",
+    "montessori": "Montessori Approach",
+
+    # Co-curricular
+    "clubs": "Clubs",
+    "after school clubs": "Clubs",
+    "enrichment": "Co-Curricular",
+    "co-curricular": "Co-Curricular",
+    "school trips": "Trips",
+    "educational visits": "Trips",
+    "sport": "PE & Games",
+    "games": "PE & Games",
+    "pe": "PE & Games",
+    "physical education": "PE & Games",
+    "performing arts": "Performing & Creative Arts",
+    "creative arts": "Performing & Creative Arts",
+    "music and drama": "Performing & Creative Arts",
+
+    # Pastoral and policies
+    "pastoral": "Pastoral Care",
+    "wellbeing": "Pastoral Care",
+    "emotional support": "Pastoral Care",
+    "safeguarding": "Pastoral Care",
+    "uniform": "Uniform",
+    "school uniform": "Uniform",
+    "policies": "Policies",
+    "behaviour policy": "Policies",
+    "anti-bullying": "Policies",
+
+    # Academic and curriculum
+    "curriculum": "Curriculum",
+    "teaching": "Teaching Philosophy",
+    "teaching philosophy": "Teaching Philosophy",
+    "continuous provision": "Continuous Provision",
+    "learning": "Curriculum",
+    "academic": "Academic Success",
+    "results": "Academic Success",
+    "scholarships": "Scholarships for Senior School places",
+    "11+": "11+ & Destination Schools",
+    "senior schools": "11+ & Destination Schools",
+    "destination schools": "11+ & Destination Schools",
+
+    # About
+    "headteacher": "Head’s Welcome",
+    "head’s welcome": "Head’s Welcome",
+    "head welcome": "Head’s Welcome",
+    "about the school": "About",
+    "our values": "Our Aims, Mission & Values",
+    "mission": "Our Aims, Mission & Values",
+    "ethos": "Our Aims, Mission & Values",
+    "governance": "Governance",
+    "facilities": "Facilities",
+    "school facilities": "Facilities",
+    "dukes": "Dukes Education",
+    "dukes education": "Dukes Education",
+    "reviews": "Reviews & Reports",
+    "inspection report": "Reviews & Reports",
+
+    # Contact
+    "contact": "Contact",
+    "get in touch": "Contact",
+    "email the school": "Contact",
+    "phone number": "Contact"
+}
+
+BAD_ANCHORS = {
+    "here": "Attend a Stay & Play",
+    "click here": "Attend a Stay & Play",
+    "click this link": "Attend a Stay & Play",
+    "more info": "Admissions",
+    "more information": "Admissions",
+    "visit our website": "Admissions",
+    "see more": "Visit Us",
+    "visit page": "Visit Us",
+    "read more": "News",
+    "learn more": "Curriculum",
+    "this page": "The Admissions Journey",
+    "register here": "Attend a Stay & Play",
+    "sign up": "Attend a Stay & Play",
+    "sign up here": "Attend a Stay & Play",
+    "book now": "Visit Us",
+    "book a place": "Visit Us",
+    "get in touch": "Contact",
+    "contact us": "Contact",
+    "open events page": "Attend a Stay & Play",
+    "registration page": "Attend a Stay & Play"
+
+}
+

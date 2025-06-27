@@ -1,10 +1,47 @@
-import os, json, pickle, re, numpy as np
+import os
+import json
+import pickle
+import re
+import numpy as np
 from datetime import datetime
+from markdown import markdown
 from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 from openai import OpenAI
 from dotenv import load_dotenv
+from markdownify import markdownify as html_to_markdown
 
+
+def parse_url_box(url_text):
+    """
+    Parses both newline-separated and semicolon-separated anchor=URL entries.
+    """
+    url_map = {}
+    parts = re.split(r'[;\n]+', url_text.strip())
+    for part in parts:
+        if '=' in part:
+            anchor, url = part.split('=', 1)
+            url_map[anchor.strip()] = url.strip()
+    return url_map
+
+
+
+
+def insert_links(text, url_map):
+    """
+    Finds any words/phrases in the text that match the anchors and replaces
+    them with Markdown links (e.g. Head → [Head](...)).
+    """
+    def safe_replace(match):
+        word = match.group(0)
+        for anchor, url in url_map.items():
+            if word.lower() == anchor.lower():
+                return f"[{word}]({url})"
+        return word
+
+    sorted_anchors = sorted(url_map.keys(), key=len, reverse=True)
+    pattern = r'\b(' + '|'.join(re.escape(a) for a in sorted_anchors) + r')\b'
+    return re.sub(pattern, safe_replace, text, flags=re.IGNORECASE)
 
 # ──────────────────────────────
 # ✅  SET-UP
@@ -80,8 +117,7 @@ def cosine_similarity(a, b):
 with open("embeddings/metadata.pkl", "rb") as f:
     kb = pickle.load(f)
     doc_embeddings = np.array(kb["embeddings"])
-    metadata       = kb["metadata"]
-print(f"✅ Loaded {len(metadata)} knowledge chunks.")
+    metadata = kb["metadata"]
 
 # ──────────────────────────────
 # 📁  LOAD SAVED STANDARD RESPONSES
@@ -121,10 +157,12 @@ def check_standard_match(q_vec: np.ndarray) -> str:
 # 📨  POST /reply
 # ──────────────────────────────
 @app.route("/reply", methods=["POST"])
-def reply():
+def generate_reply():
     try:
         body = request.get_json(force=True)
         question_raw = (body.get("message") or "").strip()
+        url_box_text = (body.get("url_box") or "").strip()
+        url_map = parse_url_box(url_box_text)
         instruction_raw = (body.get("instruction") or "").strip()
 
         # 🔒 sanitise
@@ -139,11 +177,25 @@ def reply():
         # 1) pre-approved template?
         matched = check_standard_match(q_vec)
         if matched:
-            return jsonify({
-                "reply": matched,
-                "sentiment_score": 10,
-                "strategy_explanation": "Used approved template."
-            })
+            # If matched is a string, no URL is available
+            if isinstance(matched, str):
+                return jsonify({
+                    "reply": matched,
+                    "sentiment_score": 10,
+                    "strategy_explanation": "Used approved template.",
+                    "url": "",
+                    "link_label": ""
+                })
+            # If matched is a dict with 'reply', 'url', and 'link_label'
+            else:
+                return jsonify({
+                    "reply": matched.get("reply", ""),
+                    "sentiment_score": 10,
+                    "strategy_explanation": "Used approved template.",
+                    "url": matched.get("url", ""),
+                    "link_label": matched.get("link_label", "")
+                })
+
 
         # 2) sentiment (mini model, cheap)
         sent_prompt = f"""
@@ -183,22 +235,30 @@ Enquiry:
         top_context = "\n---\n".join(context_blocks)
 
         # 4) main reply prompt
+
+        from datetime import datetime
+
+        today_date = datetime.now().strftime('%d %B %Y')
+
         prompt = f"""
+
+TODAY'S DATE IS {today_date}.
+
 You are Jess Ottley-Woodd, Director of Admissions at Bassett House School, a UK prep school.
 
-ALWAYS USE BRITISH SPELLING.
+Write a warm, professional email reply to the parent below, using only the approved school information provided.
 
-Sentiment score: {score}/10
-Strategy: {strat}
-Additional instruction: "{instruction}"
+Follow these essential rules:
+- Always use British spelling (e.g. organise, programme, enrolment)
+- Do NOT fabricate or guess any information. If something is unknown, say so honestly.
+- DO include relevant links using Markdown format: [Anchor Text](https://...). Embed links naturally in the body of the reply.
+- DO use approved anchor phrases like “Open Events page”, “Admissions page”, or “registration form”
+- NEVER use vague anchors like “click here”, “more info”, “register here”, “visit page”, etc.
+- NEVER show raw URLs, list links at the bottom, or use markdown formatting like bold, italics, or bullet points
+- NEVER mention an Open Day – Bassett House does not offer them. Instead, refer to the Stay & Play sessions or Visit Us page as appropriate
+- NEVER include expired dates. If unsure, direct the parent to the relevant web page instead
 
-Write a warm, professional reply using **only** the school info below.
-Embed source URLs as Markdown links with meaningful anchor text (never raw URLs).
-
-ONLY return the email content as plain Markdown, ready to be sent. 
-Do NOT include "Subject:", "markdown:", triple backticks, or any code block. 
-Do NOT include any explanations, just the email body itself.
-
+Reply only with the full email body in Markdown format, ready to send. Do not include 'Subject:', triple backticks, or code blocks.
 
 Parent Email:
 \"\"\"{question}\"\"\"
@@ -220,13 +280,31 @@ Bassett House School
         reply_md = clean_gpt_email_output(reply_md)
 
 
-        reply_html = markdown_to_html(reply_md)
+        # Format the reply
+        reply_md = insert_links(reply_md, url_map)
+        reply_html = markdown(reply_md)
 
+
+        # ✅ Extract URLs from HTML
+        import re
+
+        def extract_links_from_html(html):
+            matches = re.findall(r'<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', html)
+            return [(text.strip(), url.strip()) for url, text in matches]
+
+        links = extract_links_from_html(reply_html)
+        matched_url = links[0][1] if links else ""
+        matched_source = links[0][0] if links else ""
+
+        # ✅ Return enriched result
         return jsonify({
             "reply": reply_html,
             "sentiment_score": score,
-            "strategy_explanation": strat
+            "strategy_explanation": strat,
+            "url": matched_url,
+            "link_label": matched_source
         })
+
 
     except Exception as e:
         print(f"❌ REPLY ERROR: {e}")
@@ -235,19 +313,22 @@ Bassett House School
 # ──────────────────────────────
 # ✏️  POST /revise
 # ──────────────────────────────
+
 @app.route("/revise", methods=["POST"])
 def revise():
     try:
         body = request.get_json(force=True)
-        message_raw  = (body.get("message") or "").strip()
-        prev_reply   = (body.get("previous_reply") or "").strip()  # already HTML
+        message_raw   = (body.get("message") or "").strip()
+        prev_reply    = (body.get("previous_reply") or "").strip()
         instruction_raw = (body.get("instruction") or "").strip()
+        url_box_text  = (body.get("url_box") or "").strip()
 
-        if not (message_raw and prev_reply and instruction_raw):
+        if not (message_raw and prev_reply):
             return jsonify({"error":"Missing fields."}), 400
 
-        message    = remove_personal_info(message_raw)
-        instruction= remove_personal_info(instruction_raw)
+        message     = remove_personal_info(message_raw)
+        instruction = remove_personal_info(instruction_raw)
+        url_map     = parse_url_box(url_box_text)
 
         prompt = f"""
 Revise the admissions reply below according to the instruction.
@@ -270,7 +351,10 @@ Return only the revised reply in Markdown.
         ).choices[0].message.content.strip()
         new_md = clean_gpt_email_output(new_md)
 
-        return jsonify({"reply": markdown_to_html(new_md)})
+        # 🔗 Insert anchor links (if provided)
+        new_md_linked = insert_links(new_md, url_map)
+
+        return jsonify({"reply": markdown_to_html(new_md_linked)})
 
     except Exception as e:
         print(f"❌ REVISION ERROR: {e}")
